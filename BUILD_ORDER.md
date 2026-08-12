@@ -1,7 +1,7 @@
 # GPU Watch Bot — Build Order
 
 ## Before you start
-Read the Boot.dev Personal Project 1 rubric — README shape, test coverage, demo video — so nothing gets retrofitted at hour 28.
+Read the Boot.dev Personal Project 1 rubric — README shape, test coverage, demo video
 
 After Phase 0, test against the fixture (not the live API).
 
