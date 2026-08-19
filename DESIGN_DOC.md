@@ -23,11 +23,8 @@ Python bot to watch GPU listings on eBay and send Telegram alerts for good deals
 
 ### Optional later features
 
-Out of scope for the first working version. Listed here because the architecture leaves room for them, not because they are planned work.
-
-- **Reddit API (r/hardwareswap) as a second source** — 100 requests/min per client id. Needs its own normalization stage (see [Listing normalization](#listing-normalization-optional-reddit-source)), which is why it is not in the first cut
-- A tiny web UI charting price history per search term
-    - or maybe a Telegram command charting price history (per item)
+- A Telegram command charting price history (per item)
+- Reddit API (r/hardwareswap) as a second source (see [Listing normalization](#listing-normalization-optional-reddit-source))
 
 ## Architecture
 - Single process, single thread for the poll loop; `/healthz` on a daemon thread
@@ -138,8 +135,6 @@ A hallucinated price becomes a false alert, so nothing reaches deal detection un
 ---
 
 ## Listing normalization (optional Reddit source)
-
-Applies only if the Reddit source is built. eBay listings never reach this stage — the Browse API returns `price.value` as a number.
 
 r/hardwareswap titles follow the `[H]`/`[W]` tag convention, but the asking price usually is not in the title — it sits in the post body, in prose (`$290 shipped CONUS, or $270 local`). Two stages handle this:
 
