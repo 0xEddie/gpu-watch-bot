@@ -1,8 +1,10 @@
 # GPU Watch Bot
 
-An alert bot for cheap used GPU listings. It polls **eBay** (Browse API) and **r/hardwareswap** (Reddit API), compares each listing against a rolling price baseline for that card, and sends a Telegram message when something is priced well below the going rate.
+An alert bot for cheap used GPU listings. It polls **eBay** (Browse API), compares each listing against a rolling price baseline for that card, and sends a Telegram message when something is priced well below the going rate.
 
 This runs as a Linux service (systemd).
+
+r/hardwareswap (Reddit API) is a **planned optional second source** — see [Optional later features](#optional-later-features). The pipeline is source-agnostic below the client layer, so adding it later does not change the stages after `fetch`.
 
 ---
 
@@ -18,7 +20,7 @@ This runs as a Linux service (systemd).
 
 ### Registering for API access
 
-Both sources need credentials before the bot can run. eBay developer account approval can take up to 48 hours.
+eBay is the one source the bot needs to run. eBay developer account approval can take up to 48 hours, so start it first.
 
 #### Custom domain email (Cloudflare)
 
@@ -52,8 +54,8 @@ DNSSEC signs your DNS responses so they cannot be tampered with in transit. On a
 
 1. **Use an email address with a custom domain.** eBay's developer account signup autoblocks free email providers.
 2. **Register at [developer.ebay.com](https://developer.ebay.com)** using `developer@yournewdomain.com`. Approval normally arrives by confirmation email within 48 hours.
-3. **Use a sandbox keyset.** while testing the app
-4. **Mint a token** to check the credentials:
+3. **Create a sandbox keyset.**
+4. **Mint a sandbox token** to check the credentials:
    ```bash
    curl -X POST https://api.sandbox.ebay.com/identity/v1/oauth2/token \
      -H "Authorization: Basic $(printf '%s:%s' "$CLIENT_ID" "$CLIENT_SECRET" | base64 -w0)" \
@@ -61,11 +63,51 @@ DNSSEC signs your DNS responses so they cannot be tampered with in transit. On a
      -d 'grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope'
    ```
    The scope string is `https://api.ebay.com/oauth/api_scope` on both sandbox and production. Using `buy.browse` returns `invalid_scope`.
-5. **Create a production keyset** when you are ready to run against real inventory. This one requires completing eBay's marketplace account-deletion notification compliance — a public HTTPS endpoint that echoes eBay's challenge code — and the keyset stays disabled until that passes. The domain from step 1 covers the endpoint.
+5. **Create a production keyset** as soon as the sandbox keyset works. Sandbox inventory is synthetic — it proves auth and response shape and nothing else, so real GPU prices need the production keyset from the start.
+6. **Claim the marketplace account-deletion exemption.** In the developer console, open **Marketplace Account Deletion** on the production keyset and set the toggle to **Exempted from Marketplace Account Deletion**. This bot stores listing data only, never seller account data, so it is exempt — there is no callback endpoint to host and nothing gating the keyset.
+7. **Point the base URL at `https://api.ebay.com`** in `watchlist.toml`. The scope string and the request shape are identical to sandbox, so nothing else changes.
+8. **Mint a production token and search** to confirm real prices and item IDs come back:
+   ```bash
+   curl -s -G https://api.ebay.com/buy/browse/v1/item_summary/search \
+     -H "Authorization: Bearer $EBAY_TOKEN" \
+     -H "X-EBAY-C-MARKETPLACE-ID: EBAY_US" \
+     --data-urlencode 'q=rx 6600' \
+     --data-urlencode 'limit=50'
+   ```
 
-> Sandbox inventory is synthetic: it has no real GPU listings and no meaningful prices. It verifies auth and response shape only. Real price data comes from Reddit during development, and from eBay once the production keyset is live.
+> The application-level limit is 5,000 calls/day. At 300s intervals, ~15 search terms stays well inside the cap.
 
-#### Reddit
+#### Telegram
+
+<!-- TODO: BotFather, bot token, chat id -->
+
+---
+
+## Technical specifications
+
+<!-- TODO: architecture -->
+
+<!-- TODO: data model -->
+
+<!-- TODO: deal detection -->
+
+<!-- TODO: deduplication -->
+
+<!-- TODO: operations — logging, /healthz, backoff, graceful shutdown -->
+
+<!-- TODO: known constraints -->
+
+---
+
+## Optional later features
+
+Neither of these is needed for the bot to run. They are built after the eBay path works end to end.
+
+### r/hardwareswap as a second source
+
+Reddit adds a second stream of listings scored against the same eBay-derived baseline. It is optional because Reddit post volume per card is too low to form a baseline on its own, and because its prices need a parsing stage that eBay does not.
+
+Registering for API access, when the time comes:
 
 1. Use a Reddit account with a **verified email address**.
 2. Go to [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) → **create another app**.
@@ -82,35 +124,17 @@ DNSSEC signs your DNS responses so they cannot be tampered with in transit. On a
 
 The free tier allows 100 requests per minute per client id, when `User-Agent` is specified in request header.
 
-#### Telegram
-
-<!-- TODO: BotFather, bot token, chat id -->
-
----
-
-## Technical specifications
-
-<!-- TODO: architecture -->
-
-<!-- TODO: data model -->
-
-### Listing normalization
-
-eBay returns prices as numbers. r/hardwareswap does not — posts follow the `[H]`/`[W]` tag convention, but the asking price is usually written in prose in the post body rather than in the title.
-
-Reddit posts are parsed in two stages:
+**Listing normalization.** eBay returns prices as numbers. r/hardwareswap does not — posts follow the `[H]`/`[W]` tag convention, but the asking price is usually written in prose in the post body rather than in the title. Reddit posts would be parsed in two stages:
 
 1. **Regex** splits the `[H]`/`[W]` tags, drops trade-only posts, and looks for a price in the title (`$180`, `180 shipped`, `180 obo`).
 2. **LLM fallback** if stage 1 finds no price, the post body goes to a cheap model, which returns the price as JSON.
 
-The fallback is optional and off by default, so the bot and its test suite run with no API key. Each post is sent to the model at most once — the result is stored on the listing row, so the same post reappearing in `/new` on the next poll costs nothing. Extracted prices are validated against the search term's current median before they can trigger an alert; anything outside the band is dropped and counted.
+The fallback is itself optional and off by default, so the bot and its test suite run with no API key. Each post is sent to the model at most once — the result is stored on the listing row, so the same post reappearing in `/new` on the next poll costs nothing. Extracted prices are validated against the search term's current median before they can trigger an alert; anything outside the band is dropped and counted.
 
-<!-- TODO: deal detection -->
+### Price history charting
 
-<!-- TODO: deduplication -->
+A `/history rx6600` Telegram command that draws a sparkline from `price_snapshots`, or a small web UI charting price history per search term.
 
-<!-- TODO: operations — logging, /healthz, backoff, graceful shutdown -->
-
-<!-- TODO: known constraints -->
+---
 
 See [DESIGN_DOC.md](DESIGN_DOC.md) for the design architecture and [DEVELOPMENT_ACTION_PLAN.md](DEVELOPMENT_ACTION_PLAN.md) for the build sequence.
